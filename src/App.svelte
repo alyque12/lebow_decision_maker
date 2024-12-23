@@ -2,7 +2,7 @@
   import { writable } from 'svelte/store';
   let currentPage = writable('main'); // Use writable store to track current page
   let password = '';
-  const correctPassword = "murugan"; // Set the correct password
+  const correctPassword = import.meta.env.VITE_PASSWORD; // Access environment variable // Set the correct password
   let isPasswordCorrect = writable(false); // Track if password is correct
 
   let currentPageComponent;
