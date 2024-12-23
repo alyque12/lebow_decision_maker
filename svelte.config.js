@@ -1,10 +1,14 @@
-import adapterStatic from '@sveltejs/adapter-static';
+import adapter from '@sveltejs/adapter-static';
 
 const config = {
   kit: {
-    adapter: adapterStatic(),
+    adapter: adapter({
+      pages: 'dist',
+      assets: 'dist',
+      fallback: null,
+    }),
     paths: {
-      base: '/would_you_rather', // Replace with your repository name
+      base: '/lebow_decision_maker', // Replace 'your-repo-name' with the actual repository name
     },
   },
 };
