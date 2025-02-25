@@ -1,5 +1,15 @@
 <script>
     import { writable } from 'svelte/store';
+    import { 
+        createSurvey, 
+        getAllSurveys, 
+        getSurveyById, 
+        deleteSurvey,
+        addQuestion,
+        getQuestionsForSurvey,
+        deleteQuestion
+    } from './services/databaseService';
+    import { onMount } from 'svelte';
 
     // State variables
     let surveyName = '';
@@ -10,19 +20,31 @@
     let buttons = [];
     let existingSurveys = [];
     let selectedSurvey = null;
+    let selectedSurveyId = null;
     let editMode = false;
     let existingQuestions = [];
     let showAddQuestionForm = false;
+    let isLoading = false;
     
     let areTopicsAdded = writable(false);
     let isSurveyNameAdded = writable(false);
     let showSurveySelection = true;
 
     // Load existing surveys on mount
-    const loadSurveys = () => {
-        existingSurveys = JSON.parse(localStorage.getItem('surveys') || '[]');
+    onMount(async () => {
+        await loadSurveys();
+    });
+
+    const loadSurveys = async () => {
+        try {
+            isLoading = true;
+            existingSurveys = await getAllSurveys();
+            isLoading = false;
+        } catch (error) {
+            console.error("Error loading surveys:", error);
+            isLoading = false;
+        }
     };
-    loadSurveys();
 
     const createNewSurvey = () => {
         showSurveySelection = false;
@@ -31,21 +53,31 @@
         areTopicsAdded.set(false);
         surveyName = '';
         selectedSurvey = null;
+        selectedSurveyId = null;
         numTopics = 2; // Reset to default
         initializeTopics(); // Initialize topics array immediately
     };
 
-    const editExistingSurvey = (survey) => {
-        selectedSurvey = survey;
-        surveyName = survey;
-        editMode = true;
-        showSurveySelection = false;
-        isSurveyNameAdded.set(true);
-        areTopicsAdded.set(true);
-        topics = JSON.parse(localStorage.getItem(`topics_${survey}`)) || [];
-        existingQuestions = JSON.parse(localStorage.getItem(`questions_${survey}`)) || [];
-        initializeButtons();
-        showAddQuestionForm = false;
+    const editExistingSurvey = async (survey) => {
+        try {
+            isLoading = true;
+            selectedSurveyId = survey.id;
+            selectedSurvey = survey.name;
+            surveyName = survey.name;
+            editMode = true;
+            showSurveySelection = false;
+            isSurveyNameAdded.set(true);
+            areTopicsAdded.set(true);
+            topics = survey.topics || [];
+            
+            // Load questions for this survey
+            existingQuestions = await getQuestionsForSurvey(selectedSurveyId);
+            showAddQuestionForm = false;
+            isLoading = false;
+        } catch (error) {
+            console.error("Error editing survey:", error);
+            isLoading = false;
+        }
     };
 
     const toggleAddQuestionForm = () => {
@@ -56,22 +88,32 @@
         }
     };
 
-    const deleteSurvey = (survey) => {
-        if (confirm(`Are you sure you want to delete the survey "${survey}"?`)) {
-            const surveys = JSON.parse(localStorage.getItem('surveys') || '[]');
-            const updatedSurveys = surveys.filter(s => s !== survey);
-            localStorage.setItem('surveys', JSON.stringify(updatedSurveys));
-            localStorage.removeItem(`topics_${survey}`);
-            localStorage.removeItem(`questions_${survey}`);
-            existingSurveys = updatedSurveys;
+    const deleteSurveyHandler = async (survey) => {
+        if (confirm(`Are you sure you want to delete the survey "${survey.name}"?`)) {
+            try {
+                isLoading = true;
+                await deleteSurvey(survey.id);
+                await loadSurveys();
+                isLoading = false;
+            } catch (error) {
+                console.error("Error deleting survey:", error);
+                isLoading = false;
+            }
         }
     };
 
-    const deleteQuestion = (index) => {
+    const deleteQuestionHandler = async (questionId) => {
         if (confirm('Are you sure you want to delete this question?')) {
-            // Create a new array without the deleted question
-            existingQuestions = existingQuestions.filter((_, i) => i !== index);
-            localStorage.setItem(`questions_${selectedSurvey}`, JSON.stringify(existingQuestions));
+            try {
+                isLoading = true;
+                await deleteQuestion(questionId);
+                // Reload questions
+                existingQuestions = await getQuestionsForSurvey(selectedSurveyId);
+                isLoading = false;
+            } catch (error) {
+                console.error("Error deleting question:", error);
+                isLoading = false;
+            }
         }
     };
 
@@ -93,58 +135,68 @@
             return;
         }
 
-        let surveys = JSON.parse(localStorage.getItem('surveys') || '[]');
-        
-        if (surveys.includes(surveyName)) {
+        // Only check for duplicates locally for UX purposes
+        if (existingSurveys.some(s => s.name === surveyName)) {
             alert('A survey with this name already exists');
             return;
         }
 
-        surveys.push(surveyName);
-        localStorage.setItem('surveys', JSON.stringify(surveys));
-        existingSurveys = surveys;
-        
         isSurveyNameAdded.set(true);
     };
 
-    const addTopics = () => {
+    const addTopics = async () => {
         if (topics.length > 10) {
             alert('Maximum number of topics is 10');
             initializeTopics();
             return;
         }
         if (topics.every(topic => topic.trim() !== '')) {
-            localStorage.setItem(`topics_${surveyName}`, JSON.stringify(topics));
-            areTopicsAdded.set(true);
-            initializeButtons();
+            try {
+                isLoading = true;
+                // Create the survey in the database
+                const surveyData = {
+                    name: surveyName,
+                    topics: topics
+                };
+                selectedSurveyId = await createSurvey(surveyData);
+                areTopicsAdded.set(true);
+                existingQuestions = [];
+                initializeButtons();
+                isLoading = false;
+            } catch (error) {
+                console.error("Error adding topics:", error);
+                isLoading = false;
+            }
         } else {
             alert('Please enter all topics');
         }
     };
 
-    const getTopics = () => {
-        const storedTopics = JSON.parse(localStorage.getItem(`topics_${surveyName}`));
-        return storedTopics || [];
-    };
-
-    const addQuestion = () => {
+    const addQuestionHandler = async () => {
         if (question && buttons.every(btn => btn.text && btn.selectedTopics.some(t => t))) {
-            let currentQuestions = existingQuestions;
-            
-            currentQuestions.push({
-                question,
-                buttons: buttons.map(btn => ({
-                    text: btn.text,
-                    selectedTopics: topics.filter((_, index) => btn.selectedTopics[index])
-                }))
-            });
-            
-            localStorage.setItem(`questions_${surveyName}`, JSON.stringify(currentQuestions));
-            existingQuestions = currentQuestions;
-
-            question = '';
-            initializeButtons();
-            showAddQuestionForm = false;
+            try {
+                isLoading = true;
+                const questionData = {
+                    question,
+                    buttons: buttons.map(btn => ({
+                        text: btn.text,
+                        selectedTopics: topics.filter((_, index) => btn.selectedTopics[index])
+                    }))
+                };
+                
+                await addQuestion(selectedSurveyId, questionData);
+                
+                // Reload questions
+                existingQuestions = await getQuestionsForSurvey(selectedSurveyId);
+                
+                question = '';
+                initializeButtons();
+                showAddQuestionForm = false;
+                isLoading = false;
+            } catch (error) {
+                console.error("Error adding question:", error);
+                isLoading = false;
+            }
         } else {
             alert('Please fill in all fields and select at least one topic per button');
         }
@@ -167,12 +219,24 @@
         isSurveyNameAdded.set(false);
         areTopicsAdded.set(false);
         selectedSurvey = null;
+        selectedSurveyId = null;
         showAddQuestionForm = false;
         loadSurveys();
     };
+
+    // Initialize topics array when component loads
+    $: {
+        if (!$areTopicsAdded) {
+            initializeTopics();
+        }
+    }
 </script>
 
 <main>
+    {#if isLoading}
+        <div class="loading">Loading...</div>
+    {/if}
+    
     {#if showSurveySelection}
         <div class="survey-management">
             <h2>Survey Management</h2>
@@ -183,10 +247,11 @@
                     <h3>Existing Surveys</h3>
                     {#each existingSurveys as survey}
                         <div class="survey-item">
-                            <span class="survey-name">{survey}</span>
+                            <span class="survey-name">{survey.name}</span>
                             <div class="survey-actions">
                                 <button on:click={() => editExistingSurvey(survey)}>Edit</button>
-                                <button class="delete" on:click={() => deleteSurvey(survey)}>Delete</button>
+                                <button class="delete" on:click={() => deleteSurveyHandler(survey)}>Delete</button>
+                                <button class="share" on:click={() => navigator.clipboard.writeText(`${window.location.origin}?survey=${survey.id}`)}>Copy Link</button>
                             </div>
                         </div>
                     {/each}
@@ -206,7 +271,11 @@
                 />
                 <button on:click={addSurveyName}>Submit Survey Name</button>
             </div>
-
+        </div>
+    {:else if !$areTopicsAdded && !editMode}
+        <div class="topics-form">
+            <button class="back-button" on:click={goBackToSurveyList}>← Back to Survey List</button>
+            
             <div class="topics-section">
                 <h2>How many topics would you like to add? (2-10)</h2>
                 <input 
@@ -225,25 +294,26 @@
                         placeholder={`Enter topic ${i + 1}`} 
                     />
                 {/each}
+                <button on:click={addTopics}>Submit Topics</button>
             </div>
-        </div>
-    {:else if !$areTopicsAdded && !editMode}
-        <div class="topics-form">
-            <button class="back-button" on:click={goBackToSurveyList}>← Back to Survey List</button>
-            <h2>Confirm Your Topics</h2>
-            {#each topics as topic, i}
-                <input 
-                    type="text" 
-                    bind:value={topics[i]} 
-                    placeholder={`Enter topic ${i + 1}`} 
-                />
-            {/each}
-            <button on:click={addTopics}>Submit Topics</button>
         </div>
     {:else}
         <div class="question-management">
             <button class="back-button" on:click={goBackToSurveyList}>← Back to Survey List</button>
             <h2>Survey: {surveyName}</h2>
+            <div class="survey-link">
+                <p>Share this link with others:</p>
+                <div class="link-container">
+                    <input 
+                        type="text" 
+                        readonly 
+                        value={`${window.location.origin}?survey=${selectedSurveyId}`} 
+                    />
+                    <button on:click={() => navigator.clipboard.writeText(`${window.location.origin}?survey=${selectedSurveyId}`)}>
+                        Copy
+                    </button>
+                </div>
+            </div>
 
             {#if !showAddQuestionForm}
                 <div class="existing-questions">
@@ -255,7 +325,7 @@
                             <div class="question-item">
                                 <span class="question-text">{q.question}</span>
                                 <div class="question-actions">
-                                    <button class="delete" on:click={() => deleteQuestion(index)}>Delete</button>
+                                    <button class="delete" on:click={() => deleteQuestionHandler(q.id)}>Delete</button>
                                 </div>
                             </div>
                         {/each}
@@ -305,7 +375,7 @@
                         {/each}
                     </div>
 
-                    <button on:click={addQuestion}>Add Question</button>
+                    <button on:click={addQuestionHandler}>Add Question</button>
                 </div>
             {/if}
         </div>
@@ -318,6 +388,21 @@
         max-width: 800px;
         margin: 0 auto;
         padding: 1rem;
+    }
+
+    .loading {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0, 0, 0, 0.7);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        color: white;
+        font-size: 1.5rem;
+        z-index: 1000;
     }
 
     .back-button {
@@ -384,29 +469,60 @@
         background-color: #c82333;
     }
 
-    button {
-        padding: 10px 20px;
-        background-color: #007bff;
-        color: white;
-        border: none;
-        cursor: pointer;
-        border-radius: 8px;
+    .share {
+        background-color: #6c757d;
     }
 
-    button:hover {
-        background-color: #0056b3;
+    .share:hover {
+        background-color: #5a6268;
     }
 
-    h2, h3, h4 {
-        color: rgba(255, 255, 255, 0.87);
-        margin: 0;
-    }
-
+    .survey-name-form,
+    .topics-form, 
     .add-question-container {
         display: flex;
         flex-direction: column;
         align-items: center;
+        gap: 2rem;
+        width: 100%;
+    }
+
+    .survey-section,
+    .topics-section {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
         gap: 1rem;
+        width: 100%;
+        max-width: 500px;
+    }
+
+    .survey-section button {
+        margin-top: 1rem;
+    }
+    
+    .topics-section input[type="number"] {
+        margin: 1rem 0;
+    }
+
+    .survey-link {
+        background-color: #1a1a1a;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+        width: 100%;
+    }
+
+    .link-container {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .link-container input {
+        flex: 1;
+        padding: 0.5rem;
+        border-radius: 4px;
+        border: 1px solid #333;
     }
 
     input {
@@ -463,29 +579,40 @@
         gap: 0.5rem;
     }
 
+    h2, h3, h4 {
+        color: rgba(255, 255, 255, 0.87);
+        margin: 0;
+    }
+
     .no-questions {
         color: rgba(255, 255, 255, 0.6);
         text-align: center;
         padding: 1rem;
     }
 
+    button {
+        padding: 10px 20px;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        cursor: pointer;
+        border-radius: 8px;
+    }
+
+    button:hover {
+        background-color: #0056b3;
+    }
+
     @media (prefers-color-scheme: light) {
         .survey-item,
         .question-item,
-        .button-options {
+        .survey-link {
             background-color: #f8f9fa;
-        }
-
-        input {
-            background-color: white;
-            border-color: #ddd;
-            color: #213547;
         }
 
         .survey-name,
         .question-text,
-        h2, h3, h4,
-        label {
+        h2, h3, h4 {
             color: #213547;
         }
 

@@ -1,33 +1,99 @@
 <script>
     import { onMount } from 'svelte';
     import Results from './Results.svelte';
+    import { 
+        getAllSurveys, 
+        getSurveyById, 
+        getQuestionsForSurvey 
+    } from './services/databaseService';
 
     let surveys = [];
     let selectedSurvey = null;
+    let selectedSurveyId = null;
     let questions = [];
     let currentIndex = 0;
     let currentQuestion;
     let topicCounters = {};
     let showResults = false;
     let answerHistory = [];
+    let isLoading = false;
+    let error = null;
 
-    onMount(() => {
-        // Load available surveys
-        surveys = JSON.parse(localStorage.getItem('surveys') || '[]');
+    onMount(async () => {
+        // Check if there's a survey ID in the URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const surveyId = urlParams.get('survey');
+        
+        if (surveyId) {
+            try {
+                await loadAndSelectSurvey(surveyId);
+            } catch (err) {
+                error = "Failed to load the requested survey.";
+                await loadSurveys();
+            }
+        } else {
+            // Load available surveys
+            await loadSurveys();
+        }
     });
 
-    const selectSurvey = (surveyName) => {
-        selectedSurvey = surveyName;
-        const storedQuestions = JSON.parse(localStorage.getItem(`questions_${surveyName}`) || '[]');
-        questions = storedQuestions;
-        currentQuestion = questions[currentIndex];
-        
-        // Initialize counters for each topic
-        const topics = JSON.parse(localStorage.getItem(`topics_${surveyName}`)) || [];
-        topicCounters = topics.reduce((acc, topic) => {
-            acc[topic] = 0;
-            return acc;
-        }, {});
+    const loadSurveys = async () => {
+        try {
+            isLoading = true;
+            surveys = await getAllSurveys();
+            isLoading = false;
+        } catch (err) {
+            console.error("Error loading surveys:", err);
+            error = "Failed to load surveys. Please try again later.";
+            isLoading = false;
+        }
+    };
+
+    const loadAndSelectSurvey = async (surveyId) => {
+        try {
+            isLoading = true;
+            // Get survey details
+            const survey = await getSurveyById(surveyId);
+            
+            // Get questions for this survey
+            const surveyQuestions = await getQuestionsForSurvey(surveyId);
+            
+            if (!survey || !surveyQuestions || surveyQuestions.length === 0) {
+                throw new Error("Survey not found or has no questions");
+            }
+            
+            // Set up the survey
+            selectedSurveyId = surveyId;
+            selectedSurvey = survey;
+            questions = surveyQuestions;
+            currentIndex = 0;
+            currentQuestion = questions[currentIndex];
+            
+            // Initialize counters
+            topicCounters = (survey.topics || []).reduce((acc, topic) => {
+                acc[topic] = 0;
+                return acc;
+            }, {});
+            
+            isLoading = false;
+        } catch (err) {
+            console.error("Error loading survey:", err);
+            isLoading = false;
+            throw err;
+        }
+    };
+
+    const selectSurvey = async (survey) => {
+        try {
+            await loadAndSelectSurvey(survey.id);
+            
+            // Update URL without reloading the page
+            const url = new URL(window.location);
+            url.searchParams.set('survey', survey.id);
+            window.history.pushState({}, '', url);
+        } catch (err) {
+            error = "Failed to load the selected survey.";
+        }
     };
 
     const handleAnswer = (selectedTopics, buttonText) => {
@@ -41,7 +107,6 @@
             topicCounters[topic]++;
         });
         
-        console.log('Current topic counts:', topicCounters);
         nextQuestion();
     };
 
@@ -55,23 +120,41 @@
     };
 
     const handleRestart = () => {
+        // Reset everything except error state
         selectedSurvey = null;
+        selectedSurveyId = null;
         showResults = false;
         questions = [];
         currentIndex = 0;
         currentQuestion = null;
         answerHistory = [];
         topicCounters = {};
+        
+        // Clear survey ID from URL
+        const url = new URL(window.location);
+        url.searchParams.delete('survey');
+        window.history.pushState({}, '', url);
     };
 </script>
 
 <main>
+    {#if isLoading}
+        <div class="loading">Loading...</div>
+    {/if}
+    
+    {#if error}
+        <div class="error">
+            <p>{error}</p>
+            <button on:click={() => error = null}>Dismiss</button>
+        </div>
+    {/if}
+    
     {#if showResults}
         <Results 
             topicResults={topicCounters} 
             onRestart={handleRestart}
             answerHistory={answerHistory}
-            surveyName={selectedSurvey}
+            surveyName={selectedSurvey?.name}
         />
     {:else if !selectedSurvey}
         <div class="survey-selection">
@@ -83,7 +166,7 @@
                             class="survey-button"
                             on:click={() => selectSurvey(survey)}
                         >
-                            {survey}
+                            {survey.name}
                         </button>
                     {/each}
                 </div>
@@ -95,7 +178,7 @@
         <div class="main-content">
             {#if currentQuestion}
                 <div class="question-container">
-                    <h3>Survey: {selectedSurvey}</h3>
+                    <h3>Survey: {selectedSurvey.name}</h3>
                     <h2>{currentQuestion.question}</h2>
                     <div class="button-container">
                         {#each currentQuestion.buttons as button}
@@ -121,6 +204,41 @@
 <style>
     main {
         width: 100%;
+    }
+
+    .loading {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0, 0, 0, 0.7);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        color: white;
+        font-size: 1.5rem;
+        z-index: 1000;
+    }
+
+    .error {
+        background-color: #f8d7da;
+        color: #721c24;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .error button {
+        background-color: #721c24;
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        cursor: pointer;
     }
 
     .survey-selection {
@@ -229,6 +347,11 @@
 
         .no-questions {
             color: #213547;
+        }
+        
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
         }
     }
 </style>

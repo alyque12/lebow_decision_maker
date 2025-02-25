@@ -2,11 +2,7 @@
     export let topicResults = {};
     export let onRestart;
     export let answerHistory = [];
-
-    const getTopics = () => {
-        const storedTopics = JSON.parse(localStorage.getItem('topics'));
-        return storedTopics || [];
-    };
+    export let surveyName = "Survey";
 
     // Calculate percentages for each topic
     $: {
@@ -20,10 +16,45 @@
             return acc;
         }, {});
     }
+
+    // Function to share results
+    const shareResults = () => {
+        const maxScore = Math.max(...Object.values(topicResults).map(r => r.count));
+        const topChoices = Object.entries(topicResults)
+            .filter(([_, result]) => result.count === maxScore)
+            .map(([topic]) => topic);
+        
+        let resultText = `I just completed the "${surveyName}" survey!\n\n`;
+        
+        if (topChoices.length === 1) {
+            resultText += `My result: I am most suited for ${topChoices[0]}\n\n`;
+        } else {
+            resultText += `My result: I am equally suited for ${topChoices.join(' and ')}\n\n`;
+        }
+        
+        resultText += `Take the survey yourself: ${window.location.href}`;
+        
+        // Use Web Share API if available
+        if (navigator.share) {
+            navigator.share({
+                title: `My ${surveyName} Results`,
+                text: resultText,
+                url: window.location.href
+            }).catch(err => {
+                // Fallback to clipboard
+                navigator.clipboard.writeText(resultText);
+                alert('Results copied to clipboard!');
+            });
+        } else {
+            // Fallback to clipboard
+            navigator.clipboard.writeText(resultText);
+            alert('Results copied to clipboard!');
+        }
+    };
 </script>
 
 <div class="results-container">
-    <h1>Your Results</h1>
+    <h1>Your Results for "{surveyName}"</h1>
     
     <div class="results-grid">
         {#each Object.entries(topicResults) as [topic, result]}
@@ -79,9 +110,14 @@
         {/if}
     </div>
 
-    <button class="restart-button" on:click={onRestart}>
-        Start Over
-    </button>
+    <div class="action-buttons">
+        <button class="restart-button" on:click={onRestart}>
+            Start Over
+        </button>
+        <button class="share-button" on:click={shareResults}>
+            Share Results
+        </button>
+    </div>
 </div>
 
 <style>
@@ -101,6 +137,7 @@
         color: rgba(255, 255, 255, 0.87);
         font-size: 2.5rem;
         margin-bottom: 2rem;
+        text-align: center;
     }
 
     .results-grid {
@@ -220,6 +257,12 @@
         color: #646cff;
     }
 
+    .action-buttons {
+        display: flex;
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+
     .restart-button {
         padding: 1rem 2rem;
         font-size: 1.2rem;
@@ -233,6 +276,21 @@
 
     .restart-button:hover {
         background-color: #535bf2;
+    }
+
+    .share-button {
+        padding: 1rem 2rem;
+        font-size: 1.2rem;
+        background-color: #2ea44f;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+
+    .share-button:hover {
+        background-color: #2c974b;
     }
 
     @media (prefers-color-scheme: light) {
